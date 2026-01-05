@@ -22,8 +22,11 @@ dp = Dispatcher(storage=storage)
 
 ADMIN_IDS = [int(uid) for uid in os.getenv("ADMIN_IDS", "").split(",") if uid.strip()]  # Список админов
 
-# PostgreSQL connection
-DATABASE_URL = f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', '')}@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'orders_db')}"
+if os.getenv('DATABASE_URL'):
+    DATABASE_URL = os.getenv('DATABASE_URL')
+else:
+    DATABASE_URL = f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', '')}@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'orders_db')}"
+    
 db = Database(DATABASE_URL)
 
 async def init_db():
@@ -600,3 +603,4 @@ if __name__ == "__main__":
             await db.disconnect()
 
     asyncio.run(main())
+
