@@ -598,15 +598,7 @@ if __name__ == "__main__":
             print("✅ БД готова!")
             
             if use_webhook:
-                print(f"🔗 Установка webhook на {webhook_url}")
-                
-                await bot.session.close()
-                await asyncio.sleep(0.5)
-                
-                from aiogram import Bot
-                bot_instance = Bot(token=os.getenv("BOT_TOKEN"))
-                await bot_instance.set_webhook(url=webhook_url)
-                print(f"✅ Webhook установлен!")
+                print(f"🔗 Запуск веб-сервера на порту {port}...")
                 
                 app = web.Application()
                 
@@ -625,7 +617,18 @@ if __name__ == "__main__":
                 site = web.TCPSite(runner, "0.0.0.0", port)
                 await site.start()
                 
-                print(f"🤖 Бот запущен на http://0.0.0.0:{port}")
+                print(f"✅ Веб-сервер запущен на http://0.0.0.0:{port}")
+                
+                await asyncio.sleep(1)
+                
+                print(f"🔗 Установка webhook на {webhook_url}")
+                
+                try:
+                    await bot.set_webhook(url=webhook_url)
+                    print(f"✅ Webhook установлен на {webhook_url}!")
+                except Exception as e:
+                    print(f"⚠️  Ошибка при установке webhook: {e}")
+                
                 print(f"📡 Webhook слушает на /webhook")
                 
                 await asyncio.Event().wait()
