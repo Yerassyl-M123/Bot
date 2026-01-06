@@ -8,6 +8,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from dotenv import load_dotenv
 import asyncio
 import datetime
@@ -20,13 +22,13 @@ bot = Bot(token=os.getenv("BOT_TOKEN"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-ADMIN_IDS = [int(uid) for uid in os.getenv("ADMIN_IDS", "").split(",") if uid.strip()]  # Список админов
+ADMIN_IDS = [int(uid) for uid in os.getenv("ADMIN_IDS", "").split(",") if uid.strip()]  
 
 if os.getenv('DATABASE_URL'):
     DATABASE_URL = os.getenv('DATABASE_URL')
 else:
     DATABASE_URL = f"postgresql://{os.getenv('DB_USER', 'postgres')}:{os.getenv('DB_PASSWORD', '')}@{os.getenv('DB_HOST', 'localhost')}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'orders_db')}"
-    
+
 db = Database(DATABASE_URL)
 
 async def init_db():
@@ -51,14 +53,10 @@ async def init_db():
 
 
 def load_menu():
-    """Загружает меню из базы данных"""
-    # Эта функция будет использоваться асинхронно, поэтому создаём её для совместимости
-    # Реальная загрузка происходит в async функциях через db.fetch_all()
     return {}
 
 
 async def load_menu_from_db():
-    """Асинхронная загрузка меню из БД"""
     try:
         rows = await db.fetch_all("SELECT day, dishes FROM menu ORDER BY day")
         menu = {}
@@ -463,14 +461,12 @@ async def admin_back_days(callback: types.CallbackQuery):
 
 @dp.message(F.document)
 async def update_menu(message: types.Message):
-    """Обновление меню через любой Excel файл"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав для обновления меню.")
         return
     
     file_name = message.document.file_name or ""
     
-    # Проверяем расширение файла
     if not file_name.lower().endswith(('.xlsx', '.xls')):
         await message.answer("❌ Пожалуйста, отправьте Excel файл (.xlsx или .xls)")
         return
@@ -482,7 +478,6 @@ async def update_menu(message: types.Message):
         os.makedirs("downloads", exist_ok=True)
         await bot.download_file(file.file_path, file_path)
         
-        # Парсим Excel файл
         xls = pd.ExcelFile(file_path)
         df = pd.read_excel(xls, xls.sheet_names[0], header=None)
         xls.close()
@@ -500,7 +495,6 @@ async def update_menu(message: types.Message):
                     elif current_day and val not in ("Завтрак", "Салаты", "Супы", "супы", "Второе Горячее") and val != "":
                         menu_dict[current_day].append(val)
         
-        # Очищаем старое меню и сохраняем новое в БД
         await db.execute("DELETE FROM menu")
         
         for day, dishes in menu_dict.items():
@@ -510,7 +504,6 @@ async def update_menu(message: types.Message):
                 values={"day": day, "dishes": dishes_json}
             )
         
-        # Очищаем базу данных заказов
         await db.execute("DELETE FROM orders")
 
         await message.answer(f"✅ Меню успешно обновлено!\n🗑 База заказов очищена.\n\nДобавлено дней: {len(menu_dict)}")
@@ -520,7 +513,6 @@ async def update_menu(message: types.Message):
 
 @dp.message(Command("update_menu"))
 async def update_menu_command(message: types.Message, state: FSMContext):
-    """Команда для запуска режима обновления меню"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав для выполнения этой команды.")
         return
@@ -548,7 +540,6 @@ class MenuUpdate(StatesGroup):
 
 @dp.message(MenuUpdate.waiting_for_menu)
 async def process_menu_text(message: types.Message, state: FSMContext):
-    """Обрабатывает текстовое меню и сохраняет его в БД"""
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав для обновления меню.")
         return
@@ -573,7 +564,6 @@ async def process_menu_text(message: types.Message, state: FSMContext):
             await message.answer("❌ Не удалось парсить меню. Проверьте формат.")
             return
         
-        # Очищаем старое меню и сохраняем новое в БД
         await db.execute("DELETE FROM menu")
         
         for day, dishes in menu_dict.items():
@@ -583,7 +573,6 @@ async def process_menu_text(message: types.Message, state: FSMContext):
                 values={"day": day, "dishes": dishes_json}
             )
         
-        # Очищаем базу данных заказов
         await db.execute("DELETE FROM orders")
         
         await message.answer(f"✅ Меню успешно обновлено!\n🗑 База заказов очищена.\n\nДобавлено дней: {len(menu_dict)}")
@@ -595,12 +584,69 @@ async def process_menu_text(message: types.Message, state: FSMContext):
 
 if __name__ == "__main__":
     async def main():
-        await db.connect()
-        await init_db()
+        port = int(os.getenv("PORT", 8000))
+        webhook_url = os.getenv("WEBHOOK_URL")
+        use_webhook = webhook_url is not None
+        
         try:
-            await dp.start_polling(bot)
+            print("🔌 Подключение к БД...")
+            await db.connect()
+            print("✅ Подключение успешно!")
+            
+            print("📋 Инициализация БД...")
+            await init_db()
+            print("✅ БД готова!")
+            
+            if use_webhook:
+                print(f"🔗 Установка webhook на {webhook_url}")
+                
+                await bot.session.close()
+                await asyncio.sleep(0.5)
+                
+                from aiogram import Bot
+                bot_instance = Bot(token=os.getenv("BOT_TOKEN"))
+                await bot_instance.set_webhook(url=webhook_url)
+                print(f"✅ Webhook установлен!")
+                
+                app = web.Application()
+                
+                SimpleRequestHandler(
+                    dispatcher=dp,
+                    bot=bot,
+                ).register(app, path="/webhook")
+                
+                async def health_check(request):
+                    return web.Response(text="Bot is running")
+                
+                app.router.add_get("/health", health_check)
+                
+                runner = web.AppRunner(app)
+                await runner.setup()
+                site = web.TCPSite(runner, "0.0.0.0", port)
+                await site.start()
+                
+                print(f"🤖 Бот запущен на http://0.0.0.0:{port}")
+                print(f"📡 Webhook слушает на /webhook")
+                
+                await asyncio.Event().wait()
+            else:
+                print("📡 Webhook URL не установлен. Используется режим polling...")
+                print(f"🤖 Бот запущен в режиме long polling")
+                
+                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+                
+        except Exception as e:
+            print(f"❌ Ошибка: {str(e)}")
+            print(f"💡 Убедитесь что установлены все переменные окружения:")
+            print(f"   - BOT_TOKEN (обязательно)")
+            print(f"   - DATABASE_URL (или DB_* переменные, обязательно)")
+            print(f"   - WEBHOOK_URL (опционально, если не установлен, будет использован polling)")
+            print(f"   - PORT (опционально, default: 8000)")
+            raise
         finally:
-            await db.disconnect()
+            try:
+                await db.disconnect()
+            except:
+                pass
 
     asyncio.run(main())
-
